@@ -134,9 +134,14 @@ return view.extend({
 
 		/* ---- 配置: 测速参数 ---- */
 		s = m.section(form.NamedSection, 'config', _('测速参数'), _('延迟/速度测试与筛选口径'));
-		o = s.option(form.Value, 'top', _('输出最优节点数量'), _('按速度排序后取前 N 个写入结果'));
+		o = s.option(form.Value, 'top', _('输出最优节点数量'), _('按速度排序后取前 N 个写入结果 (设置了地区配额时此项被替代)'));
 		o.datatype = 'uinteger';
 		o.default = '10';
+
+		o = s.option(form.TextValue, 'region_quota', _('地区配额筛选'), _('按 IP 落地地区选择结果。格式: 国家码:数量, 空格/逗号分隔, 例如 US:10 HK:10 TW:5。设置后每个地区取速度最快的前 N 个, 未列出的地区不输出; 某地区可用节点不足时取实际数量。留空 = 全网最优前 N'));
+		o.rows = 1;
+		o.optional = true;
+		o.placeholder = 'US:10 HK:10 TW:5';
 
 		o = s.option(form.Value, 'port', _('固定测速端口'), _('留空则从下方端口池中随机选择 (edgetunnel 风格)'));
 		o.datatype = 'port';

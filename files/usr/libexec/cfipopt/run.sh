@@ -254,45 +254,106 @@ run_tests() {
 	wait
 }
 
+# 写出最终结果行: 按 remark_mode 生成备注并追加到 result.txt
+emit_line() {  # $1 = "raw	code	conn	speed"
+	local raw ip rest port rem idx cc
+	raw=${1%%$'	'*}
+	ip=${raw%%:*}
+	rest=${raw#*:}
+	port=${rest%%#*}
+	rem=${raw#*#}
+	[ "$rem" = "$raw" ] && rem=""
+	# 定位该节点的 header 文件 (results/<idx>.hdr) 取 cf-ray 国家码
+	idx=$(grep -lF "$raw" "$TMP"/results/*.txt 2>/dev/null | head -1 | sed 's|.*/||; s|\.txt$||')
+	cc=""
+	if [ -n "$idx" ] && [ -f "$TMP/results/${idx}.hdr" ]; then
+		cc=$(cc_of_iata "$(cfray_iata "$TMP/results/${idx}.hdr")")
+	fi
+	echo "${ip}:${port}#$(build_remark "$rem" "$cc")" >> "$TMP/result.txt"
+}
+
+# 非地区模式: 全网按速度/延迟排序取前 top
+select_top_n() {  # $1=mode $2=bytes
+	local top n=0 line
+	top=$(ucigetd top 10)
+	if [ "$1" = "latency" ] || [ "$2" = "0" ]; then
+		sort -k3 -n "$TMP/result.raw" | head -n "$top" > "$TMP/result.raw.top"
+	else
+		sort -k4 -nr "$TMP/result.raw" | head -n "$top" > "$TMP/result.raw.top"
+	fi
+	: > "$TMP/result.txt"
+	while IFS= read -r line; do
+		emit_line "$line"
+		n=$((n + 1))
+	done < "$TMP/result.raw.top"
+	rm -f "$TMP/result.raw.top"
+}
+
+# 地区配额模式: "US:10 HK:10 TW:5" 每地区取最快 N 个
+select_by_region() {  # $1=quota $2=mode $3=bytes
+	local quota="$1" pair cc n pairs line rl got ccline
+	pairs=$(echo "$quota" | tr ',;' ' ')
+	# 预构建 国家码→行 索引 (只保留有 cf-ray 国家码的通过节点)
+	: > "$TMP/region_lines.txt"
+	while IFS= read -r line; do
+		raw=${line%%$'	'*}
+		idx=$(grep -lF "$raw" "$TMP"/results/*.txt 2>/dev/null | head -1 | sed 's|.*/||; s|\.txt$||')
+		cc=""
+		[ -n "$idx" ] && [ -f "$TMP/results/${idx}.hdr" ] && cc=$(cc_of_iata "$(cfray_iata "$TMP/results/${idx}.hdr")")
+		[ -n "$cc" ] && printf '%s	%s\n' "$cc" "$line" >> "$TMP/region_lines.txt"
+	done < "$TMP/result.raw"
+	: > "$TMP/result.txt"
+	for pair in $pairs; do
+		cc=$(echo "${pair%%:*}" | tr 'a-z' 'A-Z')
+		n=${pair#*:}
+		[ "$n" = "$pair" ] && n=5
+		case "$n" in *[!0-9]*) n=5;; esac
+		if [ "$2" = "latency" ] || [ "$3" = "0" ]; then
+			awk -F'	' -v c="$cc" '$1==c{print}' "$TMP/region_lines.txt" | sort -k4 -n | head -n "$n" > "$TMP/region.sel"
+		else
+			awk -F'	' -v c="$cc" '$1==c{print}' "$TMP/region_lines.txt" | sort -k5 -nr | head -n "$n" > "$TMP/region.sel"
+		fi
+		got=$(wc -l < "$TMP/region.sel")
+		if [ "$got" -gt 0 ]; then
+			while IFS= read -r rl; do
+				emit_line "${rl#*$'	'}"
+			done < "$TMP/region.sel"
+			log "地区 $cc: 选中 $got/$n"
+		else
+			log "地区 $cc: 无可用节点 (0/$n)"
+		fi
+	done
+	rm -f "$TMP/region.sel"
+}
+
 aggregate() {
-	local top ml ms mode bytes ml_s ms_b nres raw ip rest port rem cc newline n
+	local top ml ms mode bytes ml_s ms_b nres region_quota
 	top=$(ucigetd top 10)
 	ml=$(ucigetd max_latency 500)
 	ms=$(ucigetd min_speed 0)
 	mode=$(ucigetd test_mode both)
 	bytes=$(ucigetd test_bytes 5242880)
+	region_quota=$(ucigetd region_quota "")
 	ml_s=$(awk -v ml="$ml" 'BEGIN{printf "%.4f", ml/1000}')
 	ms_b=$(awk -v ms="$ms" 'BEGIN{printf "%.0f", ms*125000}')
+	# 通过过滤的全部节点 (raw code conn speed)
 	if [ "$mode" = "latency" ] || [ "$bytes" = "0" ]; then
-		awk -F'	' -v ml="$ml_s" '($2==200 && $3>0 && $3<=ml){print}' "$TMP"/results/*.txt 2>/dev/null \
-			| sort -k3 -n | head -n "$top" > "$TMP/result.raw"
+		awk -F'	' -v ml="$ml_s" '($2==200 && $3>0 && $3<=ml){print}' "$TMP"/results/*.txt 2>/dev/null > "$TMP/result.raw"
 	else
-		awk -F'	' -v ml="$ml_s" -v ms="$ms_b" '($2==200 && $3>0 && $3<=ml && $4>=ms){print}' "$TMP"/results/*.txt 2>/dev/null \
-			| sort -k4 -nr | head -n "$top" > "$TMP/result.raw"
+		awk -F'	' -v ml="$ml_s" -v ms="$ms_b" '($2==200 && $3>0 && $3<=ml && $4>=ms){print}' "$TMP"/results/*.txt 2>/dev/null > "$TMP/result.raw"
 	fi
-	# 逐行重写备注为 IP 落地国家编码 (cf-ray)
-	: > "$TMP/result.txt"
-	n=0
-	while IFS= read -r line; do
-		raw=${line%%$'	'*}
-		ip=${raw%%:*}
-		rest=${raw#*:}
-		port=${rest%%#*}
-		rem=${raw#*#}
-		[ "$rem" = "$raw" ] && rem=""
-		# 定位该节点的 header 文件 (results/<idx>.hdr)
-		idx=$(grep -lF "$raw" "$TMP"/results/*.txt 2>/dev/null | head -1 | sed 's|.*/||; s|\.txt$||')
-		cc=""
-		if [ -n "$idx" ] && [ -f "$TMP/results/${idx}.hdr" ]; then
-			cc=$(cc_of_iata "$(cfray_iata "$TMP/results/${idx}.hdr")")
-		fi
-		newline="$(build_remark "$rem" "$cc")"
-		echo "${ip}:${port}#${newline}" >> "$TMP/result.txt"
-		n=$((n + 1))
-	done < "$TMP/result.raw"
-	rm -f "$TMP/result.raw"
+	if [ -n "$region_quota" ]; then
+		select_by_region "$region_quota" "$mode" "$bytes"
+	else
+		select_top_n "$mode" "$bytes"
+	fi
+	rm -f "$TMP/result.raw" "$TMP/region_lines.txt"
 	nres=$(wc -l < "$TMP/result.txt")
-	log "===== 完成: 输出 $nres 个最优节点 (备注=IP落地国家编码) ====="
+	if [ -n "$region_quota" ]; then
+		log "===== 完成: 按地区配额输出 $nres 个最优节点 ====="
+	else
+		log "===== 完成: 输出 $nres 个最优节点 (备注=IP落地国家编码) ====="
+	fi
 }
 
 # ---------------- update check ----------------

@@ -72,6 +72,7 @@ python3 build_ipk.py   # 输出 luci-app-cfipopt_1.0.0-1_all.ipk
 
 ## 更新记录
 
+- **2026-08-13 (v1.0.8)** — 新增地区配额筛选: 配置如 `US:10 HK:10 TW:5` 即按 IP 落地地区各取速度最快 N 个, 未列出的地区不输出, 日志报告各地区命中数; 留空则为全网最优前 N
 - **2026-08-13 (v1.0.7)** — 结果备注支持 IP 落地国家编码: 从测速响应 `cf-ray` 机场代码 (内置 ~200 个 CF 机房代码映射) 自动识别落地位置, 三种模式可配 (country/both/prefix); 新增「全部复制」按钮 (Clipboard API + 已复制反馈); 修复 nobody 测速时响应头写入的目录权限问题
 - **2026-08-13 (v1.0.6)** — 修复 iStoreOS 下视图加载报错 `view.extend is not a function` (重写界面时丢失 `'require view'` 声明, iStoreOS 的 LuCI 需显式引入 view 模块)
 - **2026-08-13 (v1.0.5)** — 修复配置保存无效的关键 BUG (ACL 缺少 ubus uci 方法权限, 表单改动无法写入); ipk 增加 conffiles 标记 (升级不再重置配置); 候选上限默认 1000; 界面美化 (分组配置/状态徽章/进度百分比)
