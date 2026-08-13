@@ -14,16 +14,27 @@ if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
     exit 0
 fi
 
+# 推送失败自动重试 (OpenClash 重启/节点切换等瞬时故障 30-60s)
+push_with_retry() {
+    for attempt in 1 2 3; do
+        if git push "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 20
+    done
+    git push "$REMOTE" "$BRANCH"
+}
+
 git add -A
 
 if git diff --cached --quiet; then
     # 无变更, 但可能有未推送的 commit
     if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$REMOTE/$BRANCH" 2>/dev/null || echo none)" ]; then
-        git push "$REMOTE" "$BRANCH" 2>&1
+        push_with_retry
     fi
     exit 0
 fi
 
 git commit -m "auto-sync: $(date '+%Y-%m-%d %H:%M:%S')" >/dev/null
-git push "$REMOTE" "$BRANCH" 2>&1
+push_with_retry
 echo "synced: $(date '+%Y-%m-%d %H:%M:%S')"
