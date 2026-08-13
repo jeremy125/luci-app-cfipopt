@@ -10,7 +10,7 @@ import os
 import tarfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(ROOT, "luci-app-cfipopt_1.0.0-1_all.ipk")
+OUT = os.path.join(ROOT, "luci-app-cfipopt_1.0.1-1_all.ipk")
 
 # (path-in-package, host-path, mode)
 DATA = [
@@ -23,11 +23,11 @@ DATA = [
 ]
 
 CONTROL = """Package: luci-app-cfipopt
-Version: 1.0.0-1
+Version: 1.0.1-1
 Depends: curl, luci-base
 Section: luci
 Architecture: all
-Maintainer: Hermes
+Maintainer: jeremy125
 Installed-Size: 32
 Description: Cloudflare IP optimizer & speed test for edgetunnel.
  Outputs IP:port#remark lines usable as edgetunnel node list.

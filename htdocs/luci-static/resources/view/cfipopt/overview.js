@@ -182,7 +182,10 @@ return view.extend({
 			self.refresh();
 		}, 2000);
 
-		return E('div', {}, [ statusCard, m.render(), logSection, resultSection ]);
+		// m.render() 返回 Promise, 必须等它解析出表单 DOM 后再组装页面
+		return m.render().then(function (mapEl) {
+			return E('div', {}, [ statusCard, mapEl, logSection, resultSection ]);
+		});
 	},
 
 	refresh: function () {
