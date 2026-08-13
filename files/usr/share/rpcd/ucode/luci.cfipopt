@@ -80,8 +80,9 @@ const methods = {
 	},
 
 	check_update: {
-		call: function() {
-			const p = popen(RUN + ' check_update');
+		call: function(req) {
+			const force = (req && req.args && req.args.force) ? ' force' : '';
+			const p = popen(RUN + ' check_update' + force);
 			let out = '';
 			if (p) {
 				out = p.read('all') || '';

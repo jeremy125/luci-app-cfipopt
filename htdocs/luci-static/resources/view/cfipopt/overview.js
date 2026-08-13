@@ -9,7 +9,7 @@ const callStatus = rpc.declare({ object: 'luci.cfipopt', method: 'get_status', e
 const callStart = rpc.declare({ object: 'luci.cfipopt', method: 'start', expect: {} });
 const callStop = rpc.declare({ object: 'luci.cfipopt', method: 'stop', expect: {} });
 const callProxy = rpc.declare({ object: 'luci.cfipopt', method: 'proxy', expect: {} });
-const callCheckUpdate = rpc.declare({ object: 'luci.cfipopt', method: 'check_update', expect: {} });
+const callCheckUpdate = rpc.declare({ object: 'luci.cfipopt', method: 'check_update', params: ['force'], expect: {} });
 const callUpdate = rpc.declare({ object: 'luci.cfipopt', method: 'update', expect: {} });
 
 return view.extend({
@@ -316,7 +316,7 @@ return view.extend({
 	onCheckUpdate: function () {
 		let self = this;
 		this.updateProgressLine.textContent = _('正在检查更新...');
-		callCheckUpdate().then(function (up) {
+		callCheckUpdate(true).then(function (up) {
 			self.renderUpdate(up);
 			self.updateProgressLine.textContent = '';
 			self.refresh();

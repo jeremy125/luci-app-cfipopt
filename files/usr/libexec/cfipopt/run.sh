@@ -275,6 +275,8 @@ installed_version() {
 
 cmd_check_update() {
 	local installed latest url available now last
+	# 手动检查/更新时强制绕过缓存
+	[ "$1" = "force" ] && rm -f "$TMP/update_check_ts"
 	installed=$(installed_version)
 	[ -z "$installed" ] && installed="unknown"
 	now=$(date +%s)
@@ -305,7 +307,8 @@ cmd_check_update() {
 }
 
 cmd_update() {
-	cmd_check_update >/dev/null
+	# 更新必须强制拉取最新 Release 信息
+	cmd_check_update force >/dev/null
 	local url
 	url=$(grep -o '"download_url":"[^"]*"' "$TMP/update_status.json" 2>/dev/null | cut -d'"' -f4)
 	if [ -z "$url" ]; then
