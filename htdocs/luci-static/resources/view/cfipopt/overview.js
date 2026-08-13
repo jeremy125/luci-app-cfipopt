@@ -2,6 +2,7 @@
 'require rpc';
 'require ui';
 'require form';
+'require view';
 
 const callStatus = rpc.declare({ object: 'luci.cfipopt', method: 'get_status', expect: {} });
 const callStart = rpc.declare({ object: 'luci.cfipopt', method: 'start', expect: {} });
