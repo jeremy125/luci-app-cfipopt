@@ -63,6 +63,11 @@ python3 build_ipk.py   # 输出 luci-app-cfipopt_1.0.0-1_all.ipk
 （`gzip(tar(debian-binary, control.tar.gz, data.tar.gz))`），
 可在任意 Linux 主机上运行，无需交叉编译。
 
+## 更新记录
+
+- **2026-08-13** — 修复 LuCI 界面点击「开始测速」无反应的问题（`render()` 中 `this.map` 未赋值导致 JS 报错），并补充启动失败的错误提示
+- **2026-08-13** — 首个可用版本: 优选/测速/绕过代理/结果导出全链路
+
 ## 备注
 
 - cmliu/CF-CIDR 电信/联通/移动分段上游已失效（404），默认使用 Cloudflare 官方
