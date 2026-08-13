@@ -3,7 +3,8 @@
 		"description": "Grant access to CF IP optimizer / speed test",
 		"read": {
 			"ubus": {
-				"luci.cfipopt": [ "get_status", "start", "stop", "proxy", "check_update", "update" ]
+				"luci.cfipopt": [ "get_status", "start", "stop", "proxy", "check_update", "update" ],
+				"uci": [ "changes", "get", "get_all", "revert" ]
 			},
 			"uci": [ "cfipopt" ],
 			"file": {
@@ -12,7 +13,8 @@
 		},
 		"write": {
 			"ubus": {
-				"luci.cfipopt": [ "get_status", "start", "stop", "proxy", "check_update", "update" ]
+				"luci.cfipopt": [ "get_status", "start", "stop", "proxy", "check_update", "update" ],
+				"uci": [ "add", "apply", "commit", "confirm", "delete", "order", "rename", "set" ]
 			},
 			"uci": [ "cfipopt" ],
 			"file": {

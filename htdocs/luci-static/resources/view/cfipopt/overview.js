@@ -1,9 +1,7 @@
 'use strict';
+'require rpc';
 'require ui';
 'require form';
-'require rpc';
-'require uci';
-'require view';
 
 const callStatus = rpc.declare({ object: 'luci.cfipopt', method: 'get_status', expect: {} });
 const callStart = rpc.declare({ object: 'luci.cfipopt', method: 'start', expect: {} });
@@ -29,9 +27,23 @@ return view.extend({
 			_('参照 cmliu/edgetunnel 的优选逻辑: 从 Cloudflare CIDR 段随机生成候选 IP / 拉取优选 API, 绕过代理直连测速, 输出可直接用于 edgetunnel 实例节点列表的结果 (每行 IP:端口#备注).'));
 		this.map = m;
 
+		let style = E('style', {}, [
+			'.cfipopt-badge{display:inline-block;padding:2px 12px;border-radius:12px;font-weight:bold;color:#fff;background:#888;margin-right:8px;font-size:12px}',
+			'.cfipopt-badge-running{background:#e8a33d}',
+			'.cfipopt-badge-done{background:#3d9a50}',
+			'.cfipopt-badge-error{background:#c44}',
+			'.cfipopt-badge-stopped{background:#c44}',
+			'.cfipopt-badge-idle{background:#888}',
+			'.cfipopt-pct{position:absolute;right:10px;top:3px;font-size:12px;font-weight:bold;color:#333;text-shadow:0 1px 0 rgba(255,255,255,.5)}',
+			'.cfipopt-status{border-left:3px solid #e8a33d}',
+			'.cfipopt-sub{color:#666;font-size:12px;margin-left:8px}',
+			'.cfipopt-log{height:240px;overflow:auto;background:#101418;color:#5f8;font:12px/1.55 monospace;padding:10px;border-radius:4px;white-space:pre-wrap;word-break:break-all;border:1px solid #333}',
+			'.cfipopt-result{width:100%;font-family:monospace;background:#fafafa;border:1px solid #ccc;border-radius:4px;padding:6px}'
+		].join(''));
+
 		/* ---- 状态卡片 ---- */
+		this.stateBadge = E('span', { class: 'cfipopt-badge cfipopt-badge-idle' }, _('空闲'));
 		this.proxyLine = E('span', {}, '');
-		this.stateLine = E('span', {}, '');
 		this.versionLine = E('span', {}, '');
 		this.updateProgressLine = E('span', { style: 'color:#e80;margin-left:8px' }, '');
 		this.progressInner = E('div', {
@@ -42,6 +54,8 @@ return view.extend({
 			class: 'cbi-progressbar',
 			style: 'width:100%'
 		}, this.progressInner);
+		this.progressPct = E('span', { class: 'cfipopt-pct' }, '');
+
 		this.btnStart = E('button', {
 			class: 'cbi-button cbi-button-action',
 			click: function () { self.onStart(); }
@@ -62,17 +76,19 @@ return view.extend({
 		this.btnUpdate.disabled = true;
 		this.updating = false;
 
-		let statusCard = E('div', { class: 'cbi-section' }, [
+		let statusCard = E('div', { class: 'cbi-section cfipopt-status' }, [
 			E('h3', _('测速状态')),
-			E('div', { class: 'cbi-section-descr', style: 'margin-bottom:10px' }, [
+			E('div', { class: 'cbi-section-descr', style: 'margin-bottom:8px' }, [
+				this.stateBadge,
 				this.proxyLine,
-				E('br'),
-				this.stateLine,
 				E('br'),
 				this.versionLine,
 				this.updateProgressLine
 			]),
-			this.progressWrap,
+			E('div', { style: 'position:relative;margin:4px 0 8px' }, [
+				this.progressWrap,
+				this.progressPct
+			]),
 			E('div', { class: 'right', style: 'margin-top:10px' }, [
 				this.btnStart,
 				this.btnStop,
@@ -81,30 +97,22 @@ return view.extend({
 			])
 		]);
 
-		/* ---- 配置 ---- */
-		let s = m.section(form.NamedSection, 'config', 'cfipopt', _('测速配置'));
-
-		let o = s.option(form.Value, 'count', _('随机候选 IP 数量'), _('从 CIDR 段内随机生成并参与测速的 IP 数量'));
-		o.datatype = 'uinteger';
-		o.default = '40';
-
-		o = s.option(form.Value, 'top', _('输出最优节点数量'));
-		o.datatype = 'uinteger';
-		o.default = '10';
-
-		o = s.option(form.Value, 'port', _('固定测速端口'), _('留空则从下方端口池中随机选择 (edgetunnel 风格)'));
-		o.datatype = 'port';
-		o.optional = true;
-
-		o = s.option(form.Value, 'ports', _('端口池'), _('空格分隔, 用于随机端口模式'));
-		o.default = '443 2053 2083 2087 2096 8443';
-
-		o = s.option(form.ListValue, 'test_mode', _('候选来源模式'));
+		/* ---- 配置: 候选来源 ---- */
+		let s = m.section(form.NamedSection, 'config', _('候选来源'), _('决定参与测速的 IP 从哪里来、生成多少个'));
+		let o = s.option(form.ListValue, 'test_mode', _('候选来源模式'));
 		o.value('both', _('优选 API + 随机生成'));
 		o.value('random', _('仅随机生成'));
 		o.value('api', _('仅优选 API'));
 		o.value('latency', _('仅随机生成 (只测延迟)'));
 		o.default = 'both';
+
+		o = s.option(form.Value, 'count', _('随机候选 IP 数量'), _('从 CIDR 段内随机生成并参与测速的 IP 数量'));
+		o.datatype = 'uinteger';
+		o.default = '40';
+
+		o = s.option(form.Value, 'max_candidates', _('候选节点总数上限'), _('所有来源累计后的上限 (含自定义 IP 与优选 API), 防止意外的大规模测试'));
+		o.datatype = 'uinteger';
+		o.default = '1000';
 
 		o = s.option(form.ListValue, 'cidr_source', _('CIDR 来源'));
 		o.value('official', _('Cloudflare 官方 (cloudflare.com/ips-v4)'));
@@ -119,12 +127,22 @@ return view.extend({
 		o.rows = 3;
 		o.optional = true;
 
-		o = s.option(form.TextValue, 'custom_ips', _('自定义 IP 列表'), _('每行一个 IP:端口#备注, 直接参与测速'));
+		o = s.option(form.TextValue, 'custom_ips', _('自定义 IP 列表'), _('每行一个 IP:端口#备注, 直接参与测速, 不受随机数量限制'));
 		o.rows = 3;
 		o.optional = true;
 
-		o = s.option(form.Value, 'remark_prefix', _('结果备注前缀'), _('随机候选节点的备注, 如 CF优选1'));
-		o.default = 'CF优选';
+		/* ---- 配置: 测速参数 ---- */
+		s = m.section(form.NamedSection, 'config', _('测速参数'), _('延迟/速度测试与筛选口径'));
+		o = s.option(form.Value, 'top', _('输出最优节点数量'), _('按速度排序后取前 N 个写入结果'));
+		o.datatype = 'uinteger';
+		o.default = '10';
+
+		o = s.option(form.Value, 'port', _('固定测速端口'), _('留空则从下方端口池中随机选择 (edgetunnel 风格)'));
+		o.datatype = 'port';
+		o.optional = true;
+
+		o = s.option(form.Value, 'ports', _('端口池'), _('空格分隔, 用于随机端口模式'));
+		o.default = '443 2053 2083 2087 2096 8443';
 
 		o = s.option(form.Value, 'max_latency', _('最大延迟 (ms)'), _('超过该延迟的节点将被过滤'));
 		o.datatype = 'uinteger';
@@ -138,15 +156,9 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.default = '5242880';
 
-		o = s.option(form.Value, 'parallel', _('并发测速数'));
+		o = s.option(form.Value, 'parallel', _('并发测速数'), _('同时测速的节点数'));
 		o.datatype = 'uinteger';
 		o.default = '4';
-
-		o = s.option(form.ListValue, 'bypass_mode', _('代理绕过方式'), _('auto: 检测到 OpenClash 时以 nobody (gid 65534) 身份直连测速; 该豁免由 OpenClash 自身 mangle 规则提供'));
-		o.value('auto', _('自动检测'));
-		o.value('nobody', _('强制 gid 65534 绕过'));
-		o.value('none', _('不绕过'));
-		o.default = 'auto';
 
 		o = s.option(form.Value, 'connect_timeout', _('连接超时 (秒)'));
 		o.datatype = 'uinteger';
@@ -160,18 +172,22 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.default = '30';
 
-		o = s.option(form.Value, 'max_candidates', _('候选节点总数上限'));
-		o.datatype = 'uinteger';
-		o.default = '200';
+		/* ---- 配置: 输出与绕过 ---- */
+		s = m.section(form.NamedSection, 'config', _('输出与代理绕过'), _('结果格式与测速流量是否绕过代理'));
+		o = s.option(form.Value, 'remark_prefix', _('结果备注前缀'), _('随机候选节点的备注, 如 CF优选1'));
+		o.default = 'CF优选';
+
+		o = s.option(form.ListValue, 'bypass_mode', _('代理绕过方式'), _('auto: 检测到 OpenClash 时以 nobody (gid 65534) 身份直连测速; 该豁免由 OpenClash 自身 mangle 规则提供'));
+		o.value('auto', _('自动检测'));
+		o.value('nobody', _('强制 gid 65534 绕过'));
+		o.value('none', _('不绕过'));
+		o.default = 'auto';
 
 		/* ---- 日志 + 结果 ---- */
-		this.logBox = E('pre', {
-			style: 'height:240px;overflow:auto;background:#111;color:#4f8;font:12px/1.55 monospace;padding:10px;border-radius:4px;white-space:pre-wrap;word-break:break-all'
-		}, '');
-
+		this.logBox = E('pre', { class: 'cfipopt-log' }, '');
 		this.resultBox = E('textarea', {
+			class: 'cfipopt-result',
 			rows: 12,
-			style: 'width:100%;font-family:monospace',
 			readonly: 'readonly',
 			placeholder: _('测速完成后, 此处为可直接粘贴到 edgetunnel 实例节点列表的结果 (每行 IP:端口#备注)')
 		}, '');
@@ -205,7 +221,7 @@ return view.extend({
 
 		// m.render() 返回 Promise, 必须等它解析出表单 DOM 后再组装页面
 		return m.render().then(function (mapEl) {
-			return E('div', {}, [ statusCard, mapEl, logSection, resultSection ]);
+			return E('div', {}, [ style, statusCard, mapEl, logSection, resultSection ]);
 		});
 	},
 
@@ -218,26 +234,28 @@ return view.extend({
 
 	renderStatus: function (st) {
 		if (st.proxy) {
-			let color = st.proxy.active ? 'orange' : 'green';
+			let color = st.proxy.active ? '#e8a33d' : '#3d9a50';
 			this.proxyLine.innerHTML = '';
-			this.proxyLine.appendChild(E('strong', { style: 'color:' + color }, _('代理状态: ') + (st.proxy.active ? st.proxy.name + ' (' + (st.proxy.mode || '') + ')' : _('未检测到代理'))));
-			this.proxyLine.appendChild(E('span', { style: 'color:#666;margin-left:8px' }, st.proxy.detail || ''));
+			this.proxyLine.appendChild(E('strong', { style: 'color:' + color }, _('代理: ') + (st.proxy.active ? st.proxy.name + ' (' + (st.proxy.mode || '') + ')' : _('未检测到代理'))));
+			this.proxyLine.appendChild(E('span', { class: 'cfipopt-sub' }, st.proxy.detail || ''));
 		}
 
 		let running = (st.state === 'running');
 		let pct = (st.total > 0) ? Math.round(st.done / st.total * 100) : 0;
 		this.progressInner.style.width = pct + '%';
 		this.progressInner.textContent = (st.total > 0) ? (st.done + ' / ' + st.total) : '';
+		this.progressPct.textContent = (st.total > 0) ? (pct + '%') : '';
 
-		let stateTxt = {
-			'idle': _('空闲'),
-			'running': _('测速中'),
-			'done': _('已完成'),
-			'error': _('出错'),
-			'stopped': _('已停止')
-		}[st.state] || st.state;
-		this.stateLine.innerHTML = '';
-		this.stateLine.appendChild(E('strong', {}, _('状态: ') + stateTxt + '   ' + (st.total > 0 ? pct + '%' : '')));
+		let stateMap = {
+			'idle': ['空闲', 'idle'],
+			'running': ['测速中', 'running'],
+			'done': ['已完成', 'done'],
+			'error': ['出错', 'error'],
+			'stopped': ['已停止', 'stopped']
+		};
+		let stx = stateMap[st.state] || [st.state, 'idle'];
+		this.stateBadge.className = 'cfipopt-badge cfipopt-badge-' + stx[1];
+		this.stateBadge.textContent = stx[0];
 
 		if (st.update)
 			this.renderUpdate(st.update);
@@ -276,12 +294,12 @@ return view.extend({
 		let inst = up.installed ? 'v' + String(up.installed) : '?';
 		let lat = up.latest ? 'v' + String(up.latest) : '—';
 		this.versionLine.innerHTML = '';
-		this.versionLine.appendChild(E('span', {}, _('当前版本: ') + inst + '   ' + _('最新版本: ') + lat + '  '));
+		this.versionLine.appendChild(E('span', {}, _('版本: ') + inst + '  →  ' + lat + '  '));
 		if (up.update_available) {
-			this.versionLine.appendChild(E('strong', { style: 'color:orange' }, _('(有可用更新)')));
+			this.versionLine.appendChild(E('strong', { style: 'color:#e8a33d' }, _('(有可用更新)')));
 		}
 		else if (up.latest) {
-			this.versionLine.appendChild(E('span', { style: 'color:green' }, _('(已是最新)')));
+			this.versionLine.appendChild(E('span', { style: 'color:#3d9a50' }, _('(已是最新)')));
 		}
 		else {
 			this.versionLine.appendChild(E('span', { style: 'color:#999' }, _('(检查失败或暂无 Release)')));

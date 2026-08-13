@@ -10,7 +10,7 @@ import os
 import tarfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(ROOT, "luci-app-cfipopt_1.0.4-1_all.ipk")
+OUT = os.path.join(ROOT, "luci-app-cfipopt_1.0.5-1_all.ipk")
 
 # (path-in-package, host-path, mode)
 DATA = [
@@ -23,7 +23,7 @@ DATA = [
 ]
 
 CONTROL = """Package: luci-app-cfipopt
-Version: 1.0.4-1
+Version: 1.0.5-1
 Depends: curl, luci-base
 Section: luci
 Architecture: all
@@ -66,7 +66,11 @@ def main():
         with open(os.path.join(ROOT, host_path), "rb") as f:
             data_members.append((pkg_path.lstrip("/"), f.read(), mode))
 
-    control_tar = gz(make_tar([("control", CONTROL.encode(), 0o644)]))
+    # conffiles 必须放在 control 归档里, opkg 才会在 status 中登记并保留用户配置
+    control_tar = gz(make_tar([
+        ("control", CONTROL.encode(), 0o644),
+        ("conffiles", b"/etc/config/cfipopt\n", 0o644),
+    ]))
     data_tar = gz(make_tar(data_members))
 
     outer = make_tar([
