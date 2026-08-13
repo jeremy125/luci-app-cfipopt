@@ -9,9 +9,13 @@ const callStatus = rpc.declare({ object: 'luci.cfipopt', method: 'get_status', e
 const callStart = rpc.declare({ object: 'luci.cfipopt', method: 'start', expect: {} });
 const callStop = rpc.declare({ object: 'luci.cfipopt', method: 'stop', expect: {} });
 const callProxy = rpc.declare({ object: 'luci.cfipopt', method: 'proxy', expect: {} });
+const callCheckUpdate = rpc.declare({ object: 'luci.cfipopt', method: 'check_update', expect: {} });
+const callUpdate = rpc.declare({ object: 'luci.cfipopt', method: 'update', expect: {} });
 
 return view.extend({
 	load: function () {
+		// 后台触发一次更新检查(服务端有 1h 缓存), 不阻塞页面渲染
+		callCheckUpdate().catch(function () {});
 		return callStatus().catch(function () {
 			return { state: 'idle', total: 0, done: 0, log: '', result: '', proxy: null };
 		});
@@ -28,6 +32,8 @@ return view.extend({
 		/* ---- 状态卡片 ---- */
 		this.proxyLine = E('span', {}, '');
 		this.stateLine = E('span', {}, '');
+		this.versionLine = E('span', {}, '');
+		this.updateProgressLine = E('span', { style: 'color:#e80;margin-left:8px' }, '');
 		this.progressInner = E('div', {
 			class: 'cbi-progressbar-inner',
 			style: 'width:0%'
@@ -45,18 +51,33 @@ return view.extend({
 			click: function () { self.onStop(); }
 		}, _('停止'));
 		this.btnStop.disabled = true;
+		this.btnCheck = E('button', {
+			class: 'cbi-button',
+			click: function () { self.onCheckUpdate(); }
+		}, _('检查更新'));
+		this.btnUpdate = E('button', {
+			class: 'cbi-button cbi-button-apply',
+			click: function () { self.onUpdate(); }
+		}, _('立即更新'));
+		this.btnUpdate.disabled = true;
+		this.updating = false;
 
 		let statusCard = E('div', { class: 'cbi-section' }, [
 			E('h3', _('测速状态')),
 			E('div', { class: 'cbi-section-descr', style: 'margin-bottom:10px' }, [
 				this.proxyLine,
 				E('br'),
-				this.stateLine
+				this.stateLine,
+				E('br'),
+				this.versionLine,
+				this.updateProgressLine
 			]),
 			this.progressWrap,
 			E('div', { class: 'right', style: 'margin-top:10px' }, [
 				this.btnStart,
-				this.btnStop
+				this.btnStop,
+				this.btnCheck,
+				this.btnUpdate
 			])
 		]);
 
@@ -218,8 +239,28 @@ return view.extend({
 		this.stateLine.innerHTML = '';
 		this.stateLine.appendChild(E('strong', {}, _('状态: ') + stateTxt + '   ' + (st.total > 0 ? pct + '%' : '')));
 
+		if (st.update)
+			this.renderUpdate(st.update);
+
+		if (st.update_progress) {
+			let pmap = {
+				'downloading': _('正在下载新版...'),
+				'installing': _('正在安装...'),
+				'done': _('更新完成, 请刷新页面'),
+				'failed': _('更新失败, 见日志')
+			};
+			this.updateProgressLine.textContent = pmap[st.update_progress] || '';
+			this.updateProgressLine.style.color = (st.update_progress === 'failed') ? '#c00' : '#e80';
+			if (st.update_progress === 'done' || st.update_progress === 'failed') {
+				this.updating = false;
+				this.btnCheck.disabled = false;
+			}
+		}
+
 		this.btnStart.disabled = running;
 		this.btnStop.disabled = !running;
+		this.btnCheck.disabled = this.updating;
+		this.btnUpdate.disabled = this.updating || !this.lastUpdateAvailable;
 
 		if (st.log) {
 			this.logBox.textContent = st.log;
@@ -228,6 +269,24 @@ return view.extend({
 		if (st.result) {
 			this.resultBox.value = st.result;
 		}
+	},
+
+	renderUpdate: function (up) {
+		this.lastUpdateAvailable = !!up.update_available;
+		let inst = up.installed ? 'v' + String(up.installed) : '?';
+		let lat = up.latest ? 'v' + String(up.latest) : '—';
+		this.versionLine.innerHTML = '';
+		this.versionLine.appendChild(E('span', {}, _('当前版本: ') + inst + '   ' + _('最新版本: ') + lat + '  '));
+		if (up.update_available) {
+			this.versionLine.appendChild(E('strong', { style: 'color:orange' }, _('(有可用更新)')));
+		}
+		else if (up.latest) {
+			this.versionLine.appendChild(E('span', { style: 'color:green' }, _('(已是最新)')));
+		}
+		else {
+			this.versionLine.appendChild(E('span', { style: 'color:#999' }, _('(检查失败或暂无 Release)')));
+		}
+		this.btnUpdate.disabled = this.updating || !this.lastUpdateAvailable;
 	},
 
 	onStart: function () {
@@ -251,6 +310,35 @@ return view.extend({
 			self.refresh();
 		}).catch(function (e) {
 			ui.addNotification(null, E('p', {}, _('停止失败: ') + String(e)));
+		});
+	},
+
+	onCheckUpdate: function () {
+		let self = this;
+		this.updateProgressLine.textContent = _('正在检查更新...');
+		callCheckUpdate().then(function (up) {
+			self.renderUpdate(up);
+			self.updateProgressLine.textContent = '';
+			self.refresh();
+		}).catch(function (e) {
+			self.updateProgressLine.textContent = _('检查失败: ') + String(e);
+		});
+	},
+
+	onUpdate: function () {
+		let self = this;
+		if (!confirm(_('确定要更新到最新版本吗? 更新完成后请刷新页面。')))
+			return;
+		this.updating = true;
+		this.btnUpdate.disabled = true;
+		this.btnCheck.disabled = true;
+		this.updateProgressLine.textContent = _('更新中... (下载/安装约需 1-2 分钟)');
+		callUpdate().then(function () {
+			// 后台执行, 轮询 get_status 中的 update_progress
+			self.refresh();
+		}).catch(function (e) {
+			self.updating = false;
+			self.updateProgressLine.textContent = _('更新失败: ') + String(e);
 		});
 	},
 

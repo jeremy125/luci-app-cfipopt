@@ -10,7 +10,7 @@ import os
 import tarfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(ROOT, "luci-app-cfipopt_1.0.1-1_all.ipk")
+OUT = os.path.join(ROOT, "luci-app-cfipopt_1.0.2-1_all.ipk")
 
 # (path-in-package, host-path, mode)
 DATA = [
@@ -23,7 +23,7 @@ DATA = [
 ]
 
 CONTROL = """Package: luci-app-cfipopt
-Version: 1.0.1-1
+Version: 1.0.2-1
 Depends: curl, luci-base
 Section: luci
 Architecture: all

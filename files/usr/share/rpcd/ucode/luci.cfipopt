@@ -45,6 +45,15 @@ const methods = {
 				catch (e) {}
 			}
 
+			const us = safeRead(TMP + '/update_status.json');
+			if (length(us)) {
+				try {
+					res.update = json(us);
+				}
+				catch (e) {}
+			}
+			res.update_progress = trim(safeRead(TMP + '/update_progress'));
+
 			return res;
 		}
 	},
@@ -66,6 +75,31 @@ const methods = {
 	proxy: {
 		call: function() {
 			popen(RUN + ' proxy >/dev/null 2>&1');
+			return { ok: true };
+		}
+	},
+
+	check_update: {
+		call: function() {
+			const p = popen(RUN + ' check_update');
+			let out = '';
+			if (p) {
+				out = p.read('all') || '';
+				p.close();
+			}
+			try {
+				return json(trim(out));
+			}
+			catch (e) {
+				return { installed: null, latest: null, update_available: false, download_url: '' };
+			}
+		}
+	},
+
+	update: {
+		call: function() {
+			// 后台执行: 下载 + opkg 安装 + 延迟重启
+			popen(RUN + ' update >/dev/null 2>&1 &');
 			return { ok: true };
 		}
 	}

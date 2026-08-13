@@ -249,6 +249,96 @@ aggregate() {
 	log "===== 完成: 输出 $nres 个最优节点 ====="
 }
 
+# ---------------- update check ----------------
+# 版本号规范化: 去 v 前缀和 -release 后缀
+ver_norm() { echo "$1" | sed 's/^v//; s/-.*//'; }
+
+# $1 > $2 → exit 0; 否则 exit 1
+ver_gt() {
+	local a b
+	a=$(ver_norm "$1"); b=$(ver_norm "$2")
+	[ "$a" = "$b" ] && return 1
+	echo "$a $b" | awk '{
+		split($1,x,"."); split($2,y,".");
+		for (i=1; i<=4; i++) {
+			xi=(x[i]==""?0:x[i])+0; yi=(y[i]==""?0:y[i])+0;
+			if (xi>yi) exit 0;
+			if (xi<yi) exit 1;
+		}
+		exit 1;
+	}'
+}
+
+installed_version() {
+	awk '/^Package: luci-app-cfipopt$/{f=1} f&&/^Version:/{print $2; exit}' /usr/lib/opkg/status 2>/dev/null
+}
+
+cmd_check_update() {
+	local installed latest url available now last
+	installed=$(installed_version)
+	[ -z "$installed" ] && installed="unknown"
+	now=$(date +%s)
+	last=$(cat "$TMP/update_check_ts" 2>/dev/null || echo 0)
+	# 1 小时缓存, 避免频繁请求 GitHub API
+	if [ ! -f "$TMP/update.json" ] || [ $((now - last)) -ge 3600 ]; then
+		curl -s --max-time 10 -H "Accept: application/vnd.github+json" \
+			"https://api.github.com/repos/jeremy125/luci-app-cfipopt/releases/latest" \
+			> "$TMP/update.json.new" 2>/dev/null
+		if [ -s "$TMP/update.json.new" ]; then
+			mv "$TMP/update.json.new" "$TMP/update.json"
+			echo "$now" > "$TMP/update_check_ts"
+		else
+			rm -f "$TMP/update.json.new"
+		fi
+	fi
+	latest=$(grep -o '"tag_name": *"[^"]*"' "$TMP/update.json" 2>/dev/null | head -1 | sed 's/.*"tag_name": *"//; s/"//')
+	url=$(grep -o '"browser_download_url": *"[^"]*"' "$TMP/update.json" 2>/dev/null | head -1 | sed 's/.*"browser_download_url": *"//; s/"//')
+	available="false"
+	if [ -n "$latest" ] && [ "$installed" != "unknown" ]; then
+		if ver_gt "$latest" "$installed"; then
+			available="true"
+		fi
+	fi
+	printf '{"installed":"%s","latest":"%s","update_available":%s,"download_url":"%s"}\n' \
+		"$installed" "$latest" "$available" "$url" > "$TMP/update_status.json"
+	cat "$TMP/update_status.json"
+}
+
+cmd_update() {
+	cmd_check_update >/dev/null
+	local url
+	url=$(grep -o '"download_url":"[^"]*"' "$TMP/update_status.json" 2>/dev/null | cut -d'"' -f4)
+	if [ -z "$url" ]; then
+		log "更新失败: 未获取到下载地址"
+		echo '{"ok":false,"msg":"未获取到下载地址"}'
+		return 1
+	fi
+	echo downloading > "$TMP/update_progress"
+	log "开始下载: $url"
+	if ! curl -sL --max-time 120 -o /tmp/luci-app-cfipopt-update.ipk "$url" 2>/dev/null; then
+		echo failed > "$TMP/update_progress"
+		log "下载失败"
+		echo '{"ok":false,"msg":"下载失败"}'
+		return 1
+	fi
+	echo installing > "$TMP/update_progress"
+	log "开始安装..."
+	opkg install /tmp/luci-app-cfipopt-update.ipk > "$TMP/opkg.log" 2>&1
+	local rc=$?
+	rm -f /tmp/luci-app-cfipopt-update.ipk
+	if [ $rc -ne 0 ]; then
+		echo failed > "$TMP/update_progress"
+		log "安装失败 (rc=$rc): $(tail -1 "$TMP/opkg.log")"
+		echo "{\"ok\":false,\"msg\":\"安装失败 rc=$rc\"}"
+		return 1
+	fi
+	echo done > "$TMP/update_progress"
+	log "安装成功, 2 秒后重启服务..."
+	# 延迟重启, 让当前 RPC 响应先返回
+	( sleep 2; /etc/init.d/rpcd restart; /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
+	echo '{"ok":true,"msg":"更新完成, 请刷新页面"}'
+}
+
 # ---------------- main ----------------
 cmd_run() {
 	rm -rf "$TMP/results"; mkdir -p "$TMP/results"
@@ -331,5 +421,7 @@ case "$1" in
 	run)   cmd_run ;;
 	proxy) cmd_proxy ;;
 	status) [ -f "$TMP/state" ] && cat "$TMP/state" || echo idle ;;
-	*) echo "usage: $0 {start|stop|run|proxy|status}"; exit 1 ;;
+	check_update) cmd_check_update ;;
+	update) cmd_update ;;
+	*) echo "usage: $0 {start|stop|run|proxy|status|check_update|update}"; exit 1 ;;
 esac
