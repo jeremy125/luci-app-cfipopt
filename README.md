@@ -72,6 +72,7 @@ python3 build_ipk.py   # 输出 luci-app-cfipopt_1.0.0-1_all.ipk
 
 ## 更新记录
 
+- **2026-08-13 (v1.0.7)** — 结果备注支持 IP 落地国家编码: 从测速响应 `cf-ray` 机场代码 (内置 ~200 个 CF 机房代码映射) 自动识别落地位置, 三种模式可配 (country/both/prefix); 新增「全部复制」按钮 (Clipboard API + 已复制反馈); 修复 nobody 测速时响应头写入的目录权限问题
 - **2026-08-13 (v1.0.6)** — 修复 iStoreOS 下视图加载报错 `view.extend is not a function` (重写界面时丢失 `'require view'` 声明, iStoreOS 的 LuCI 需显式引入 view 模块)
 - **2026-08-13 (v1.0.5)** — 修复配置保存无效的关键 BUG (ACL 缺少 ubus uci 方法权限, 表单改动无法写入); ipk 增加 conffiles 标记 (升级不再重置配置); 候选上限默认 1000; 界面美化 (分组配置/状态徽章/进度百分比)
 - **2026-08-13 (v1.0.4)** — 修复更新检查被 GitHub API 匿名配额(60次/h)限制的问题: 改用 `releases/latest` HTML 重定向获取最新版本, 不消耗 API 配额; 更新安装后增加版本校验(安装版本必须 ≥ 目标版本)

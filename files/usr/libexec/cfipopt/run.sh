@@ -187,17 +187,42 @@ build_candidates() {
 }
 
 # ---------------- speed test ----------------
+# CF 数据中心(机场代码) → 国家编码映射表
+IATA_CC='ATL:US BOS:US BUF:US BWI:US CLT:US CMH:US DEN:US DFW:US DTW:US EWR:US FLL:US IAD:US IAH:US IND:US JAX:US JFK:US LAS:US LAX:US LGA:US MCI:US MDW:US MEM:US MIA:US MKE:US MSP:US MSY:US ORD:US PDX:US PHX:US PIT:US RDU:US SAN:US SEA:US SFO:US SJC:US SLC:US STL:US TPA:US TUS:US OKC:US OMA:US AUS:US YUL:CA YVR:CA YWG:CA YYC:CA YYZ:CA YOW:CA YQB:CA MEX:MX GDL:MX MTY:MX CUN:MX GRU:BR GIG:BR EZE:AR SCL:CL BOG:CO LIM:PE PTY:PA SJO:CR SDQ:DO UIO:EC GYE:EC MVD:UY CCS:VE LHR:GB LGW:GB MAN:GB EDI:GB BHX:GB GLA:GB DUB:IE SNN:IE CDG:FR ORY:FR MRS:FR NCE:FR FRA:DE MUC:DE DUS:DE HAM:DE BER:DE CGN:DE STR:DE AMS:NL BRU:BE LUX:LU ZRH:CH GVA:CH VIE:AT MAD:ES BCN:ES VLC:ES AGP:ES LIS:PT OPO:PT MXP:IT FCO:IT LIN:IT VCE:IT NAP:IT BGY:IT ATH:GR WAW:PL KRK:PL GDN:PL WRO:PL PRG:CZ BTS:SK BUD:HU OTP:RO SOF:BG ZAG:HR LJU:SI BEG:RS KBP:UA HEL:FI ARN:SE GOT:SE OSL:NO CPH:DK KEF:IS TLL:EE RIX:LV VNO:LT IST:TR SAW:TR TLV:IL LCA:CY MLA:MT DXB:AE SHJ:AE AUH:AE RUH:SA JED:SA DOH:QA KWI:KW MCT:OM BAH:BH AMM:JO JNB:ZA CPT:ZA DUR:ZA LOS:NG NBO:KE ACC:GH DSS:SN CAI:EG CMN:MA TUN:TN ADD:ET DAR:TZ EBB:UG ABJ:CI ALG:DZ DEL:IN BOM:IN BLR:IN MAA:IN HYD:IN CCU:IN AMD:IN COK:IN LKO:IN KHI:PK ISB:PK LHE:PK DAC:BD CMB:LK KTM:NP RGN:MM BKK:TH SGN:VN HAN:VN PNH:KH KUL:MY SIN:SG CGK:ID DPS:ID SUB:ID MNL:PH CEB:PH HKG:HK PEK:CN PVG:CN CAN:CN TPE:TW KHH:TW NRT:JP HND:JP KIX:JP FUK:JP OKA:JP CTS:JP NGO:JP ICN:KR GMP:KR PUS:KR SYD:AU MEL:AU BNE:AU PER:AU ADL:AU CBR:AU AKL:NZ WLG:NZ NAN:FJ TBS:GE GYD:AZ EVN:AM ALA:KZ TAS:UZ'
+
+# 机场代码 → 国家码
+cc_of_iata() {
+	echo "$IATA_CC" | tr ' ' '\n' | awk -F: -v c="$1" '$1==c{print $2}' | head -1
+}
+
+# 从响应头提取 cf-ray 机场代码
+cfray_iata() {  # $1 = header 文件
+	grep -i '^cf-ray:' "$1" 2>/dev/null | tail -1 | sed 's/.*-\([A-Z][A-Z][A-Z]\)\r\?$/\1/'
+}
+
+# 按 remark_mode 生成备注: country=国家码 / both=国家码-原备注 / prefix=原备注
+build_remark() {  # $1=原备注 $2=国家码
+	local mode
+	mode=$(ucigetd remark_mode country)
+	case "$mode" in
+		country) [ -n "$2" ] && echo "$2" || echo "$1" ;;
+		both)    [ -n "$2" ] && echo "$2-$1" || echo "$1" ;;
+		*)       echo "$1" ;;
+	esac
+}
+
 test_one() {
-	local idx=$1 raw=$2 ip rest port remark out code conn speed lat_ms spd_kb
+	local idx=$1 raw=$2 ip rest port remark out code conn speed lat_ms spd_kb hdrf
 	ip=${raw%%:*}
 	rest=${raw#*:}
 	port=${rest%%#*}
 	remark=${raw#*#}
 	[ "$remark" = "$raw" ] && remark=""
+	hdrf="$TMP/results/${idx}.hdr"
 	if [ "$BYPASS" = "nobody" ]; then
-		out=$(su -s /bin/ash nobody -c "/usr/sbin/curl -s -4 --noproxy '*' --http1.1 --connect-timeout ${CT} --max-time ${MT} -o /dev/null -w '%{http_code} %{time_connect} %{speed_download}' --resolve speed.cloudflare.com:${port}:${ip} 'https://speed.cloudflare.com:${port}/__down?bytes=${BYTES}'" 2>/dev/null)
+		out=$(su -s /bin/ash nobody -c "/usr/sbin/curl -s -4 --noproxy '*' --http1.1 --connect-timeout ${CT} --max-time ${MT} -o /dev/null -w '%{http_code} %{time_connect} %{speed_download}' -D '$hdrf' --resolve speed.cloudflare.com:${port}:${ip} 'https://speed.cloudflare.com:${port}/__down?bytes=${BYTES}'" 2>/dev/null)
 	else
-		out=$(/usr/sbin/curl -s -4 --noproxy '*' --http1.1 --connect-timeout "${CT}" --max-time "${MT}" -o /dev/null -w '%{http_code} %{time_connect} %{speed_download}' --resolve "speed.cloudflare.com:${port}:${ip}" "https://speed.cloudflare.com:${port}/__down?bytes=${BYTES}" 2>/dev/null)
+		out=$(/usr/sbin/curl -s -4 --noproxy '*' --http1.1 --connect-timeout "${CT}" --max-time "${MT}" -o /dev/null -w '%{http_code} %{time_connect} %{speed_download}' -D "$hdrf" --resolve "speed.cloudflare.com:${port}:${ip}" "https://speed.cloudflare.com:${port}/__down?bytes=${BYTES}" 2>/dev/null)
 	fi
 	code=$(echo "$out" | awk '{print $1}')
 	conn=$(echo "$out" | awk '{print $2}')
@@ -230,7 +255,7 @@ run_tests() {
 }
 
 aggregate() {
-	local top ml ms mode bytes ml_s ms_b nres
+	local top ml ms mode bytes ml_s ms_b nres raw ip rest port rem cc newline n
 	top=$(ucigetd top 10)
 	ml=$(ucigetd max_latency 500)
 	ms=$(ucigetd min_speed 0)
@@ -239,14 +264,35 @@ aggregate() {
 	ml_s=$(awk -v ml="$ml" 'BEGIN{printf "%.4f", ml/1000}')
 	ms_b=$(awk -v ms="$ms" 'BEGIN{printf "%.0f", ms*125000}')
 	if [ "$mode" = "latency" ] || [ "$bytes" = "0" ]; then
-		awk -F'\t' -v ml="$ml_s" '($2==200 && $3>0 && $3<=ml){print}' "$TMP"/results/*.txt 2>/dev/null \
-			| sort -k3 -n | head -n "$top" | cut -f1 > "$TMP/result.txt"
+		awk -F'	' -v ml="$ml_s" '($2==200 && $3>0 && $3<=ml){print}' "$TMP"/results/*.txt 2>/dev/null \
+			| sort -k3 -n | head -n "$top" > "$TMP/result.raw"
 	else
-		awk -F'\t' -v ml="$ml_s" -v ms="$ms_b" '($2==200 && $3>0 && $3<=ml && $4>=ms){print}' "$TMP"/results/*.txt 2>/dev/null \
-			| sort -k4 -nr | head -n "$top" | cut -f1 > "$TMP/result.txt"
+		awk -F'	' -v ml="$ml_s" -v ms="$ms_b" '($2==200 && $3>0 && $3<=ml && $4>=ms){print}' "$TMP"/results/*.txt 2>/dev/null \
+			| sort -k4 -nr | head -n "$top" > "$TMP/result.raw"
 	fi
+	# 逐行重写备注为 IP 落地国家编码 (cf-ray)
+	: > "$TMP/result.txt"
+	n=0
+	while IFS= read -r line; do
+		raw=${line%%$'	'*}
+		ip=${raw%%:*}
+		rest=${raw#*:}
+		port=${rest%%#*}
+		rem=${raw#*#}
+		[ "$rem" = "$raw" ] && rem=""
+		# 定位该节点的 header 文件 (results/<idx>.hdr)
+		idx=$(grep -lF "$raw" "$TMP"/results/*.txt 2>/dev/null | head -1 | sed 's|.*/||; s|\.txt$||')
+		cc=""
+		if [ -n "$idx" ] && [ -f "$TMP/results/${idx}.hdr" ]; then
+			cc=$(cc_of_iata "$(cfray_iata "$TMP/results/${idx}.hdr")")
+		fi
+		newline="$(build_remark "$rem" "$cc")"
+		echo "${ip}:${port}#${newline}" >> "$TMP/result.txt"
+		n=$((n + 1))
+	done < "$TMP/result.raw"
+	rm -f "$TMP/result.raw"
 	nres=$(wc -l < "$TMP/result.txt")
-	log "===== 完成: 输出 $nres 个最优节点 ====="
+	log "===== 完成: 输出 $nres 个最优节点 (备注=IP落地国家编码) ====="
 }
 
 # ---------------- update check ----------------
@@ -348,6 +394,9 @@ cmd_update() {
 # ---------------- main ----------------
 cmd_run() {
 	rm -rf "$TMP/results"; mkdir -p "$TMP/results"
+	# nobody (gid 65534) 绕过测速时需遍历 TMP 并写入响应头文件
+	chmod 755 "$TMP"
+	chmod 777 "$TMP/results"
 	rm -f "$TMP/pids"
 	echo running > "$TMP/state"
 

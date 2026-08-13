@@ -175,8 +175,14 @@ return view.extend({
 
 		/* ---- 配置: 输出与绕过 ---- */
 		s = m.section(form.NamedSection, 'config', _('输出与代理绕过'), _('结果格式与测速流量是否绕过代理'));
-		o = s.option(form.Value, 'remark_prefix', _('结果备注前缀'), _('随机候选节点的备注, 如 CF优选1'));
+		o = s.option(form.Value, 'remark_prefix', _('结果备注前缀'), _('随机候选节点的原备注, 如 CF优选1'));
 		o.default = 'CF优选';
+
+		o = s.option(form.ListValue, 'remark_mode', _('结果备注模式'), _('country: 备注为 IP 落地位置的国家编码 (取自测速响应 cf-ray 机场代码); both: 国家编码+原备注; prefix: 仅原备注'));
+		o.value('country', _('国家编码 (IP 落地)'));
+		o.value('both', _('国家编码 + 原备注'));
+		o.value('prefix', _('仅原备注前缀'));
+		o.default = 'country';
 
 		o = s.option(form.ListValue, 'bypass_mode', _('代理绕过方式'), _('auto: 检测到 OpenClash 时以 nobody (gid 65534) 身份直连测速; 该豁免由 OpenClash 自身 mangle 规则提供'));
 		o.value('auto', _('自动检测'));
@@ -193,11 +199,12 @@ return view.extend({
 			placeholder: _('测速完成后, 此处为可直接粘贴到 edgetunnel 实例节点列表的结果 (每行 IP:端口#备注)')
 		}, '');
 
+		this.btnCopyAll = E('button', {
+			class: 'cbi-button cbi-button-action',
+			click: function () { self.copyAllResult(); }
+		}, _('全部复制'));
 		let resultBtns = E('div', { class: 'right', style: 'margin-top:8px' }, [
-			E('button', {
-				class: 'cbi-button cbi-button-action',
-				click: function () { self.copyResult(); }
-			}, _('复制结果')),
+			this.btnCopyAll,
 			E('button', {
 				class: 'cbi-button',
 				click: function () { self.downloadResult(); }
@@ -361,17 +368,32 @@ return view.extend({
 		});
 	},
 
-	copyResult: function () {
-		let ta = this.resultBox;
-		ta.focus();
-		ta.select();
-		ta.setSelectionRange(0, 999999);
-		try {
-			document.execCommand('copy');
+	copyAllResult: function () {
+		let self = this;
+		let text = this.resultBox.value || '';
+		let ok = function () {
+			let old = self.btnCopyAll.textContent;
+			self.btnCopyAll.textContent = _('已复制 ✓');
+			setTimeout(function () { self.btnCopyAll.textContent = old; }, 1500);
+		};
+		let fallback = function () {
+			let ta = self.resultBox;
+			ta.focus();
+			ta.select();
+			ta.setSelectionRange(0, 999999);
+			try {
+				document.execCommand('copy');
+				ok();
+			}
+			catch (e) {
+				ui.addNotification(null, E('p', {}, _('复制失败, 请手动 Ctrl+C')));
+			}
+		};
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(ok).catch(fallback);
 		}
-		catch (e) {
-			if (navigator.clipboard && navigator.clipboard.writeText)
-				navigator.clipboard.writeText(ta.value).catch(function () {});
+		else {
+			fallback();
 		}
 	},
 
