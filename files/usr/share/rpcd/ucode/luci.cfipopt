@@ -1,0 +1,74 @@
+'use strict';
+
+import { popen, readfile } from 'fs';
+
+const TMP = '/tmp/cfipopt';
+const RUN = '/usr/libexec/cfipopt/run.sh';
+
+function safeRead(p) {
+	try {
+		const s = readfile(p);
+		return (s == null) ? '' : s;
+	}
+	catch (e) {
+		return '';
+	}
+}
+
+const methods = {
+	get_status: {
+		call: function() {
+			const res = {
+				state: trim(safeRead(TMP + '/state')) || 'idle',
+				total: 0,
+				done: 0,
+				log: safeRead(TMP + '/log'),
+				result: safeRead(TMP + '/result.txt'),
+				proxy: null
+			};
+
+			const cand = safeRead(TMP + '/candidates.txt');
+			if (length(trim(cand)))
+				res.total = length(split(trim(cand), '\n'));
+
+			const p = popen('ls ' + TMP + '/results 2>/dev/null | wc -l');
+			if (p) {
+				res.done = int(trim(p.read('all')));
+				p.close();
+			}
+
+			const pj = safeRead(TMP + '/proxy.json');
+			if (length(pj)) {
+				try {
+					res.proxy = json(pj);
+				}
+				catch (e) {}
+			}
+
+			return res;
+		}
+	},
+
+	start: {
+		call: function() {
+			popen(RUN + ' start >/dev/null 2>&1');
+			return { ok: true };
+		}
+	},
+
+	stop: {
+		call: function() {
+			popen(RUN + ' stop >/dev/null 2>&1');
+			return { ok: true };
+		}
+	},
+
+	proxy: {
+		call: function() {
+			popen(RUN + ' proxy >/dev/null 2>&1');
+			return { ok: true };
+		}
+	}
+};
+
+return { 'luci.cfipopt': methods };

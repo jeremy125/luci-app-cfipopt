@@ -1,0 +1,13 @@
+{
+	"admin/services/cfipopt": {
+		"title": "CF IP 优选测速",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "cfipopt/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-cfipopt" ]
+		}
+	}
+}

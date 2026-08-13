@@ -1,0 +1,23 @@
+{
+	"luci-app-cfipopt": {
+		"description": "Grant access to CF IP optimizer / speed test",
+		"read": {
+			"ubus": {
+				"luci.cfipopt": [ "get_status", "start", "stop", "proxy" ]
+			},
+			"uci": [ "cfipopt" ],
+			"file": {
+				"/tmp/cfipopt/*": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.cfipopt": [ "get_status", "start", "stop", "proxy" ]
+			},
+			"uci": [ "cfipopt" ],
+			"file": {
+				"/tmp/cfipopt/*": [ "write" ]
+			}
+		}
+	}
+}
