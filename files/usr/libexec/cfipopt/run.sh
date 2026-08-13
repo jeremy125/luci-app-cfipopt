@@ -274,27 +274,27 @@ installed_version() {
 }
 
 cmd_check_update() {
-	local installed latest url available now last
+	local installed latest url available now last loc tag
 	# 手动检查/更新时强制绕过缓存
 	[ "$1" = "force" ] && rm -f "$TMP/update_check_ts"
 	installed=$(installed_version)
 	[ -z "$installed" ] && installed="unknown"
 	now=$(date +%s)
 	last=$(cat "$TMP/update_check_ts" 2>/dev/null || echo 0)
-	# 1 小时缓存, 避免频繁请求 GitHub API
+	# 1 小时缓存; 用 HTML 重定向取最新 tag, 不消耗 GitHub API 配额
 	if [ ! -f "$TMP/update.json" ] || [ $((now - last)) -ge 3600 ]; then
-		curl -s --max-time 10 -H "Accept: application/vnd.github+json" \
-			"https://api.github.com/repos/jeremy125/luci-app-cfipopt/releases/latest" \
-			> "$TMP/update.json.new" 2>/dev/null
-		if [ -s "$TMP/update.json.new" ]; then
-			mv "$TMP/update.json.new" "$TMP/update.json"
+		loc=$(curl -sL --max-time 10 -o /dev/null -w '%{url_effective}' \
+			"https://github.com/jeremy125/luci-app-cfipopt/releases/latest" 2>/dev/null)
+		tag=$(echo "$loc" | sed 's|.*/releases/tag/||')
+		if [ -n "$tag" ]; then
+			printf '{"tag":"%s","version":"%s"}\n' "$tag" "$(echo "$tag" | sed 's/^v//')" > "$TMP/update.json"
 			echo "$now" > "$TMP/update_check_ts"
-		else
-			rm -f "$TMP/update.json.new"
 		fi
 	fi
-	latest=$(grep -o '"tag_name": *"[^"]*"' "$TMP/update.json" 2>/dev/null | head -1 | sed 's/.*"tag_name": *"//; s/"//')
-	url=$(grep -o '"browser_download_url": *"[^"]*"' "$TMP/update.json" 2>/dev/null | head -1 | sed 's/.*"browser_download_url": *"//; s/"//')
+	latest=$(grep -o '"version":"[^"]*"' "$TMP/update.json" 2>/dev/null | head -1 | sed 's/.*"version":"//; s/"//')
+	tag=$(grep -o '"tag":"[^"]*"' "$TMP/update.json" 2>/dev/null | head -1 | sed 's/.*"tag":"//; s/"//')
+	url=""
+	[ -n "$tag" ] && url="https://github.com/jeremy125/luci-app-cfipopt/releases/download/${tag}/luci-app-cfipopt_${latest}-1_all.ipk"
 	available="false"
 	if [ -n "$latest" ] && [ "$installed" != "unknown" ]; then
 		if ver_gt "$latest" "$installed"; then
@@ -309,11 +309,12 @@ cmd_check_update() {
 cmd_update() {
 	# 更新必须强制拉取最新 Release 信息
 	cmd_check_update force >/dev/null
-	local url
+	local latest url rc now_ver
+	latest=$(grep -o '"latest":"[^"]*"' "$TMP/update_status.json" 2>/dev/null | cut -d'"' -f4)
 	url=$(grep -o '"download_url":"[^"]*"' "$TMP/update_status.json" 2>/dev/null | cut -d'"' -f4)
 	if [ -z "$url" ]; then
-		log "更新失败: 未获取到下载地址"
-		echo '{"ok":false,"msg":"未获取到下载地址"}'
+		log "更新失败: 无法获取最新版本信息 (检查网络/GitHub 连通性)"
+		echo '{"ok":false,"msg":"无法获取最新版本信息"}'
 		return 1
 	fi
 	echo downloading > "$TMP/update_progress"
@@ -327,16 +328,18 @@ cmd_update() {
 	echo installing > "$TMP/update_progress"
 	log "开始安装..."
 	opkg install /tmp/luci-app-cfipopt-update.ipk > "$TMP/opkg.log" 2>&1
-	local rc=$?
+	rc=$?
 	rm -f /tmp/luci-app-cfipopt-update.ipk
-	if [ $rc -ne 0 ]; then
+	now_ver=$(installed_version)
+	# 防护: 安装后版本必须 >= 目标版本, 否则视为失败
+	if [ $rc -ne 0 ] || { [ -n "$now_ver" ] && ver_gt "$latest" "$now_ver"; }; then
 		echo failed > "$TMP/update_progress"
-		log "安装失败 (rc=$rc): $(tail -1 "$TMP/opkg.log")"
-		echo "{\"ok\":false,\"msg\":\"安装失败 rc=$rc\"}"
+		log "安装失败: 当前 $(installed_version), 目标 $latest (rc=$rc)"
+		echo '{"ok":false,"msg":"安装失败, 版本未更新"}'
 		return 1
 	fi
 	echo done > "$TMP/update_progress"
-	log "安装成功, 2 秒后重启服务..."
+	log "安装成功 ($(installed_version)), 2 秒后重启服务..."
 	# 延迟重启, 让当前 RPC 响应先返回
 	( sleep 2; /etc/init.d/rpcd restart; /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
 	echo '{"ok":true,"msg":"更新完成, 请刷新页面"}'
